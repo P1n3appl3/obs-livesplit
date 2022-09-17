@@ -1,0 +1,23 @@
+[package]
+name = "obs-livesplit"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "livesplit"
+crate-type = ["cdylib"]
+
+[dependencies]
+obs-wrapper = { path = "../rust-obs-plugins" }
+livesplit-core = { path = "../livesplit-core", features = [
+  "software-rendering",
+  "font-loading",
+  "auto-splitting"
+] }
+notify = "4"
+log = "0.4"
+
+
+[profile.release]
+lto = "thin"
+panic = "abort"
