@@ -2,20 +2,23 @@ mod config;
 
 use std::{
     borrow::Cow,
+    fs::File,
+    io::BufWriter,
     path::{Path, PathBuf},
-    time::Duration,
 };
 
 use livesplit_core::{
-    auto_splitting::Runtime, layout::LayoutState, rendering::software::Renderer, Layout,
-    SharedTimer, Timer,
+    auto_splitting::Runtime,
+    layout::LayoutState,
+    rendering::software::Renderer,
+    run::saver::livesplit::{save_timer, IoWrite},
+    Layout, SharedTimer, Timer,
 };
 use log::{info, warn};
-use notify::DebouncedEvent;
 use obs_wrapper::{
-    graphics::*, log::Logger, obs_register_module, obs_string, prelude::*, properties::*, source::*,
+    graphics::*, log::Logger, obs_register_module, obs_string, obs_sys, prelude::*, properties::*,
+    source::*, wrapper::PtrWrapper,
 };
-// use obs_wrapper::{obs_sys, wrapper::PtrWrapper};
 
 use config::ConfigWatcher;
 
@@ -115,9 +118,10 @@ impl Drop for Source {
 
 impl Sourceable for Source {
     fn create(ctx: &mut CreatableSourceContext<Source>, _source: SourceContext) -> Source {
-        let (width, height) = (300, 500);
+        let width = ctx.settings.get(SETTING_WIDTH).unwrap();
+        let height = ctx.settings.get(SETTING_HEIGHT).unwrap();
         let timer = Timer::new(config::default_run()).unwrap().into_shared();
-        let mut state = Self {
+        let mut source = Self {
             timer: timer.clone(),
             layout: Layout::default_layout(),
             autosplitter: Runtime::new(timer),
@@ -126,13 +130,22 @@ impl Sourceable for Source {
             image: GraphicsTexture::new(width, height, GraphicsColorFormat::RGBA),
             width,
             height,
-            splits_watcher: ConfigWatcher::new(Duration::from_millis(200)),
-            layout_watcher: ConfigWatcher::new(Duration::from_millis(200)),
-            splitter_watcher: ConfigWatcher::new(Duration::from_millis(200)),
+            splits_watcher: ConfigWatcher::default(),
+            layout_watcher: ConfigWatcher::default(),
+            splitter_watcher: ConfigWatcher::default(),
         };
-        state.update_settings(&ctx.settings);
+        source.update_settings(&ctx.settings);
+        hotkey!(ctx, "Split", split);
+        hotkey!(ctx, "Reset", reset, true);
+        hotkey!(ctx, "Undo", undo_split);
+        hotkey!(ctx, "Skip", skip_split);
+        hotkey!(ctx, "Pause", toggle_pause_or_start);
+        hotkey!(ctx, "Undo All Pauses", undo_all_pauses);
+        hotkey!(ctx, "Previous Comparison", switch_to_previous_comparison);
+        hotkey!(ctx, "Next Comparison", switch_to_next_comparison);
+        hotkey!(ctx, "Toggle Timing Method", toggle_timing_method);
         info!("created livesplit source");
-        state
+        source
     }
 
     fn get_id() -> ObsString {
@@ -142,6 +155,28 @@ impl Sourceable for Source {
     fn get_type() -> SourceType {
         SourceType::INPUT
     }
+}
+
+unsafe extern "C" fn save_splits(
+    _: *mut obs_sys::obs_properties_t,
+    _: *mut obs_sys::obs_property_t,
+    data: *mut std::ffi::c_void,
+) -> bool {
+    let source: &mut Source = &mut *data.cast();
+    if let Some(path) = source.timer.read().unwrap().run().path() {
+        if let Ok(file) = File::create(path) {
+            if save_timer(&source.timer.read().unwrap(), IoWrite(BufWriter::new(file))).is_ok() {
+                info!("saved splits");
+            } else {
+                warn!("failed to write splits to file");
+            }
+        }
+    } else {
+        warn!("failed to save splits: no splits file found")
+    }
+    // drain events so it doesn't reload the splits we just saved
+    while source.splits_watcher.check_events().is_some() {}
+    false
 }
 
 impl GetPropertiesSource for Source {
@@ -158,13 +193,13 @@ impl GetPropertiesSource for Source {
             NumberProp::new_int().with_range(100u16..1000),
         );
         props.add(
-            SETTING_LAYOUT,
-            obs_string!("Layout File (.ls1l)"),
+            SETTING_SPLITS,
+            obs_string!("Splits File (.lss)"),
             PathProp::new(PathType::File),
         );
         props.add(
-            SETTING_SPLITS,
-            obs_string!("Splits File (.lss)"),
+            SETTING_LAYOUT,
+            obs_string!("Layout File (.ls1l)"),
             PathProp::new(PathType::File),
         );
         props.add(
@@ -172,25 +207,65 @@ impl GetPropertiesSource for Source {
             obs_string!("Autosplitter module (.wasm)"),
             PathProp::new(PathType::File),
         );
-        // TODO: add wrapper for add_button (how to pass state through?)
-        // unsafe {
-        //     obs_sys::obs_properties_add_button(
-        //         props.as_ptr() as *mut obs_sys::obs_properties_t,
-        //         obs_string!("save_splits").as_ptr(),
-        //         obs_string!("Save Splits").as_ptr(),
-        //         Some(callback),
-        //     );
-        // }
-        // TODO: drain splits watcher upon saving splits?
+        // TODO: add wrapper for add_button, pass state through with list of callbacks
+        // like for hotkey, and figure out how this is getting the data pointer in the
+        // current callback
+        unsafe {
+            obs_sys::obs_properties_add_button(
+                props.as_ptr_mut(),
+                obs_string!("save_splits").as_ptr(),
+                obs_string!("Save Splits").as_ptr(),
+                Some(save_splits),
+            );
+        }
 
         props
     }
 }
 
-// TODO: https://github.com/bennetthardwick/rust-obs-plugins/pull/15
+impl MouseWheelSource for Source {
+    fn mouse_wheel(&mut self, event: obs_sys::obs_mouse_event, xdelta: i32, ydelta: i32) {
+        info!("delta: {xdelta}, {ydelta}, event: {event:?}")
+    }
+}
+
+impl MouseMoveSource for Source {
+    fn mouse_move(&mut self, event: obs_sys::obs_mouse_event, leave: bool) {
+        info!("leave: {leave}, event: {event:?}")
+    }
+}
+
+impl MouseClickSource for Source {
+    fn mouse_click(
+        &mut self,
+        event: obs_sys::obs_mouse_event,
+        button: obs_wrapper::source::MouseButton,
+        pressed: bool,
+        click_count: u8,
+    ) {
+        info!(
+            "click: {button:?}, pressed: {pressed}, count: {click_count},
+event: {event:?}"
+        )
+    }
+}
+
+impl FocusSource for Source {
+    fn focus(&mut self, focused: bool) {
+        info!("focused: {focused}")
+    }
+}
+
+impl KeyClickSource for Source {
+    fn key_click(&mut self, event: obs_sys::obs_key_event, pressed: bool) {
+        info!("click: {event:?} pressed: {pressed}")
+    }
+}
+
 impl GetDefaultsSource for Source {
-    fn get_defaults(_settings: &mut DataObj) {
-        unimplemented!()
+    fn get_defaults(settings: &mut DataObj) {
+        settings.set_default::<_, i64, _>(SETTING_WIDTH, 350);
+        settings.set_default::<_, i64, _>(SETTING_HEIGHT, 700);
     }
 }
 
@@ -221,21 +296,14 @@ impl GetHeightSource for Source {
 
 impl VideoRenderSource for Source {
     fn video_render(&mut self, _ctx: &mut GlobalContext, _vid_ctx: &mut VideoRenderContext) {
-        use DebouncedEvent::*;
-        while let Ok(event) = self.splits_watcher.rx.try_recv() {
-            if let Create(p) | Write(p) = event {
-                self.update_splits(&p)
-            }
+        while let Some(p) = self.splits_watcher.check_events() {
+            self.update_splits(&p)
         }
-        while let Ok(event) = self.splitter_watcher.rx.try_recv() {
-            if let Create(p) | Write(p) = event {
-                self.update_autosplitter(p)
-            }
+        while let Some(p) = self.splitter_watcher.check_events() {
+            self.update_autosplitter(p)
         }
-        while let Ok(event) = self.layout_watcher.rx.try_recv() {
-            if let Create(p) | Write(p) = event {
-                self.update_layout(&p)
-            }
+        while let Some(p) = self.layout_watcher.check_events() {
+            self.update_layout(&p)
         }
 
         self.layout
@@ -260,7 +328,8 @@ impl Module for LiveSplitModule {
     }
 
     fn load(&mut self, load_context: &mut LoadContext) -> bool {
-        let source = load_context
+        let logger_init = Logger::new().init().is_ok();
+        let source_info = load_context
             .create_source_builder::<Source>()
             .enable_get_name()
             .enable_get_width()
@@ -268,16 +337,21 @@ impl Module for LiveSplitModule {
             .enable_get_properties()
             .enable_update()
             .enable_video_render()
-            // .enable_get_defaults()
+            .enable_mouse_wheel()
+            .enable_mouse_move()
+            .enable_mouse_click()
+            .enable_focus()
+            .enable_key_click()
+            .with_icon(Icon::GameCapture)
+            .enable_get_defaults()
             // .enable_activate()
             // .enable_deactivate()
             .build();
-        // TODO: set source icon_type
-        // TODO: deactivate hotkeys on swap (just set a flag in activate/deactivate)
+        // TODO: test deactivate hotkeys (just set a flag in activate/deactivate)
         // TODO: add "interactive" (scroll)
 
-        load_context.register_source(source);
-        Logger::new().init().is_ok()
+        load_context.register_source(source_info);
+        logger_init
     }
 
     fn description() -> ObsString {
@@ -285,7 +359,7 @@ impl Module for LiveSplitModule {
     }
 
     fn name() -> ObsString {
-        obs_string!("LiveSplit")
+        obs_string!("LiveSplit One")
     }
 
     fn author() -> ObsString {

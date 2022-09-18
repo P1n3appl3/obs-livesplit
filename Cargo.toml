@@ -8,15 +8,14 @@ name = "livesplit"
 crate-type = ["cdylib"]
 
 [dependencies]
-obs-wrapper = { path = "../rust-obs-plugins" }
-livesplit-core = { path = "../livesplit-core", features = [
+obs-wrapper = { path = "../../rust-obs-plugins" }
+livesplit-core = { path = "../../livesplit-core", features = [
   "software-rendering",
   "font-loading",
-  "auto-splitting"
+  "auto-splitting",
 ] }
 notify = "4"
 log = "0.4"
-
 
 [profile.release]
 lto = "thin"

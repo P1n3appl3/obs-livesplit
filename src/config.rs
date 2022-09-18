@@ -15,6 +15,21 @@ use livesplit_core::{
 use log::warn;
 use notify::{self, DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 
+#[macro_export]
+macro_rules! hotkey {
+    ($ctx:ident, $description:literal, $method:ident $(, $arg:expr)?) => {
+        $ctx.register_hotkey(
+            obs_string!(concat!(stringify!($method), "_key")),
+            obs_string!($description),
+            |hotkey, source| {
+                if hotkey.pressed {
+                    source.timer.write().unwrap().$method($($arg)?)
+                }
+            },
+        )
+    };
+}
+
 pub fn default_run() -> Run {
     let mut run = Run::new();
     run.push_segment(Segment::new("Time"));
@@ -92,12 +107,19 @@ impl ConfigWatcher {
             .watch(path.parent().unwrap(), RecursiveMode::Recursive)
     }
 
-    pub fn handle_updates(&mut self, mut callback: impl FnMut(PathBuf)) {
+    pub fn check_events(&mut self) -> Option<PathBuf> {
         use DebouncedEvent::*;
         while let Ok(event) = self.rx.try_recv() {
-            if let Create(p) | Write(p) = event && self.path.as_deref() == Some(&p){
-                callback(p)
+            if let Create(p) | Write(p) = event && self.path.as_deref() == Some(&p) {
+                return Some(p)
             }
         }
+        None
+    }
+}
+
+impl Default for ConfigWatcher {
+    fn default() -> Self {
+        Self::new(Duration::from_millis(200))
     }
 }
