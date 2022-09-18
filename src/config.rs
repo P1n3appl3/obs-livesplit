@@ -100,11 +100,18 @@ impl ConfigWatcher {
             if current.as_path() == path {
                 return Ok(());
             }
-            self.watcher.unwatch(current.parent().unwrap())?;
+            self.watcher.unwatch(
+                current
+                    .parent()
+                    .ok_or_else(|| notify::Error::Generic("No Parent".to_owned()))?,
+            )?;
         }
         self.path = Some(path.into());
-        self.watcher
-            .watch(path.parent().unwrap(), RecursiveMode::Recursive)
+        self.watcher.watch(
+            path.parent()
+                .ok_or_else(|| notify::Error::Generic("No Parent".to_owned()))?,
+            RecursiveMode::Recursive,
+        )
     }
 
     pub fn check_events(&mut self) -> Option<PathBuf> {

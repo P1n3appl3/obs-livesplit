@@ -89,22 +89,28 @@ impl Source {
         if let Some(path) = settings.get::<Cow<str>, _>(SETTING_SPLITS) {
             let new = PathBuf::from(path.as_ref());
             if self.splits_watcher.path.as_ref() != Some(&new) {
-                self.splits_watcher.change_file(&new).unwrap();
-                self.update_splits(&new);
+                match self.splits_watcher.change_file(&new) {
+                    Ok(_) => self.update_splits(&new),
+                    Err(e) => warn!("failed to reload splits: {e}"),
+                }
             }
         }
         if let Some(path) = settings.get::<Cow<str>, _>(SETTING_AUTOSPLITTER) {
             let new = PathBuf::from(path.as_ref());
             if self.splitter_watcher.path.as_ref() != Some(&new) {
-                self.splitter_watcher.change_file(&new).unwrap();
-                self.update_autosplitter(new);
+                match self.layout_watcher.change_file(&new) {
+                    Ok(_) => self.update_autosplitter(new),
+                    Err(e) => warn!("failed to reload autosplitter: {e}"),
+                }
             }
         }
         if let Some(path) = settings.get::<Cow<str>, _>(SETTING_LAYOUT) {
             let new = PathBuf::from(path.as_ref());
             if self.layout_watcher.path.as_ref() != Some(&new) {
-                self.layout_watcher.change_file(&new).unwrap();
-                self.update_layout(&new);
+                match self.layout_watcher.change_file(&new) {
+                    Ok(_) => self.update_layout(&new),
+                    Err(e) => warn!("failed to reload layout: {e}"),
+                }
             }
         }
     }
@@ -135,7 +141,7 @@ impl Sourceable for Source {
             splitter_watcher: ConfigWatcher::default(),
         };
         source.update_settings(&ctx.settings);
-        hotkey!(ctx, "Split", split);
+        hotkey!(ctx, "Split", split_or_start);
         hotkey!(ctx, "Reset", reset, true);
         hotkey!(ctx, "Undo", undo_split);
         hotkey!(ctx, "Skip", skip_split);
@@ -224,41 +230,13 @@ impl GetPropertiesSource for Source {
 }
 
 impl MouseWheelSource for Source {
-    fn mouse_wheel(&mut self, event: obs_sys::obs_mouse_event, xdelta: i32, ydelta: i32) {
-        info!("delta: {xdelta}, {ydelta}, event: {event:?}")
-    }
-}
-
-impl MouseMoveSource for Source {
-    fn mouse_move(&mut self, event: obs_sys::obs_mouse_event, leave: bool) {
-        info!("leave: {leave}, event: {event:?}")
-    }
-}
-
-impl MouseClickSource for Source {
-    fn mouse_click(
-        &mut self,
-        event: obs_sys::obs_mouse_event,
-        button: obs_wrapper::source::MouseButton,
-        pressed: bool,
-        click_count: u8,
-    ) {
-        info!(
-            "click: {button:?}, pressed: {pressed}, count: {click_count},
-event: {event:?}"
-        )
-    }
-}
-
-impl FocusSource for Source {
-    fn focus(&mut self, focused: bool) {
-        info!("focused: {focused}")
-    }
-}
-
-impl KeyClickSource for Source {
-    fn key_click(&mut self, event: obs_sys::obs_key_event, pressed: bool) {
-        info!("click: {event:?} pressed: {pressed}")
+    fn mouse_wheel(&mut self, _event: obs_sys::obs_mouse_event, _xdelta: i32, ydelta: i32) {
+        use std::cmp::Ordering;
+        match ydelta.cmp(&0) {
+            Ordering::Less => self.layout.scroll_down(),
+            Ordering::Equal => {}
+            Ordering::Greater => self.layout.scroll_up(),
+        }
     }
 }
 
@@ -338,17 +316,12 @@ impl Module for LiveSplitModule {
             .enable_update()
             .enable_video_render()
             .enable_mouse_wheel()
-            .enable_mouse_move()
-            .enable_mouse_click()
-            .enable_focus()
-            .enable_key_click()
             .with_icon(Icon::GameCapture)
             .enable_get_defaults()
             // .enable_activate()
             // .enable_deactivate()
             .build();
         // TODO: test deactivate hotkeys (just set a flag in activate/deactivate)
-        // TODO: add "interactive" (scroll)
 
         load_context.register_source(source_info);
         logger_init
