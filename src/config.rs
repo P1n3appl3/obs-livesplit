@@ -22,7 +22,7 @@ macro_rules! hotkey {
             obs_string!(concat!(stringify!($method), "_key")),
             obs_string!($description),
             |hotkey, source| {
-                if hotkey.pressed {
+                if source.enable_hotkeys && hotkey.pressed {
                     source.timer.write().unwrap().$method($($arg)?)
                 }
             },

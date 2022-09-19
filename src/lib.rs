@@ -14,7 +14,7 @@ use livesplit_core::{
     run::saver::livesplit::{save_timer, IoWrite},
     Layout, SharedTimer, Timer,
 };
-use log::{info, warn};
+use log::*;
 use obs_wrapper::{
     graphics::*, log::Logger, obs_register_module, obs_string, obs_sys, prelude::*, properties::*,
     source::*, wrapper::PtrWrapper,
@@ -36,6 +36,7 @@ struct Source {
     pub image: GraphicsTexture,
     pub width: u32,
     pub height: u32,
+    pub enable_hotkeys: bool,
     pub splits_watcher: ConfigWatcher,
     pub layout_watcher: ConfigWatcher,
     pub splitter_watcher: ConfigWatcher,
@@ -116,12 +117,6 @@ impl Source {
     }
 }
 
-impl Drop for Source {
-    fn drop(&mut self) {
-        info!("source destroyed")
-    }
-}
-
 impl Sourceable for Source {
     fn create(ctx: &mut CreatableSourceContext<Source>, _source: SourceContext) -> Source {
         let width = ctx.settings.get(SETTING_WIDTH).unwrap();
@@ -134,6 +129,7 @@ impl Sourceable for Source {
             state: LayoutState::default(),
             renderer: Renderer::new(),
             image: GraphicsTexture::new(width, height, GraphicsColorFormat::RGBA),
+            enable_hotkeys: true,
             width,
             height,
             splits_watcher: ConfigWatcher::default(),
@@ -150,7 +146,6 @@ impl Sourceable for Source {
         hotkey!(ctx, "Previous Comparison", switch_to_previous_comparison);
         hotkey!(ctx, "Next Comparison", switch_to_next_comparison);
         hotkey!(ctx, "Toggle Timing Method", toggle_timing_method);
-        info!("created livesplit source");
         source
     }
 
@@ -180,8 +175,10 @@ unsafe extern "C" fn save_splits(
     } else {
         warn!("failed to save splits: no splits file found")
     }
-    // drain events so it doesn't reload the splits we just saved
-    while source.splits_watcher.check_events().is_some() {}
+    // TODO: draining the splits_watcher event queue here doesn't work due to
+    // debouncing. is it ok that we always load the splits immediately after
+    // saving them to the file, or do we need to signal to the splits_watcher
+    // that it should drop the next update?
     false
 }
 
@@ -200,22 +197,23 @@ impl GetPropertiesSource for Source {
         );
         props.add(
             SETTING_SPLITS,
-            obs_string!("Splits File (.lss)"),
-            PathProp::new(PathType::File),
+            obs_string!("Splits"),
+            PathProp::new(PathType::File).with_filter(obs_string!("Splits File (*.lss)")),
         );
         props.add(
             SETTING_LAYOUT,
-            obs_string!("Layout File (.ls1l)"),
-            PathProp::new(PathType::File),
+            obs_string!("Layout"),
+            PathProp::new(PathType::File)
+                .with_filter(obs_string!("Livesplit Layout File (*.ls1l *.lsl)")),
         );
         props.add(
             SETTING_AUTOSPLITTER,
-            obs_string!("Autosplitter module (.wasm)"),
-            PathProp::new(PathType::File),
+            obs_string!("Autosplitter"),
+            PathProp::new(PathType::File).with_filter(obs_string!("WASM module (*.wasm)")),
         );
-        // TODO: add wrapper for add_button, pass state through with list of callbacks
-        // like for hotkey, and figure out how this is getting the data pointer in the
-        // current callback
+        // TODO: add wrapper for add_button, maybe pass state through with list of
+        // callbacks like for hotkey? figure out how this is getting the data
+        // pointer in the current callback
         unsafe {
             obs_sys::obs_properties_add_button(
                 props.as_ptr_mut(),
@@ -249,7 +247,6 @@ impl GetDefaultsSource for Source {
 
 impl UpdateSource for Source {
     fn update(&mut self, settings: &mut DataObj, _context: &mut GlobalContext) {
-        info!("settings update");
         self.update_settings(settings);
     }
 }
@@ -269,6 +266,18 @@ impl GetWidthSource for Source {
 impl GetHeightSource for Source {
     fn get_height(&mut self) -> u32 {
         self.height
+    }
+}
+
+impl ActivateSource for Source {
+    fn activate(&mut self) {
+        self.enable_hotkeys = true;
+    }
+}
+
+impl DeactivateSource for Source {
+    fn deactivate(&mut self) {
+        self.enable_hotkeys = false;
     }
 }
 
@@ -306,7 +315,6 @@ impl Module for LiveSplitModule {
     }
 
     fn load(&mut self, load_context: &mut LoadContext) -> bool {
-        let logger_init = Logger::new().init().is_ok();
         let source_info = load_context
             .create_source_builder::<Source>()
             .enable_get_name()
@@ -318,13 +326,11 @@ impl Module for LiveSplitModule {
             .enable_mouse_wheel()
             .with_icon(Icon::GameCapture)
             .enable_get_defaults()
-            // .enable_activate()
-            // .enable_deactivate()
+            .enable_activate()
+            .enable_deactivate()
             .build();
-        // TODO: test deactivate hotkeys (just set a flag in activate/deactivate)
-
         load_context.register_source(source_info);
-        logger_init
+        Logger::new().init().is_ok()
     }
 
     fn description() -> ObsString {
