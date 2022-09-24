@@ -87,7 +87,7 @@ impl Source {
                 self.image = GraphicsTexture::new(w, h, GraphicsColorFormat::RGBA);
             }
         }
-        if let Some(path) = settings.get::<Cow<str>, _>(SETTING_SPLITS) {
+        if let Some(path) = settings.get::<Cow<str>>(SETTING_SPLITS) {
             let new = PathBuf::from(path.as_ref());
             if self.splits_watcher.path.as_ref() != Some(&new) {
                 match self.splits_watcher.change_file(&new) {
@@ -96,7 +96,7 @@ impl Source {
                 }
             }
         }
-        if let Some(path) = settings.get::<Cow<str>, _>(SETTING_AUTOSPLITTER) {
+        if let Some(path) = settings.get::<Cow<str>>(SETTING_AUTOSPLITTER) {
             let new = PathBuf::from(path.as_ref());
             if self.splitter_watcher.path.as_ref() != Some(&new) {
                 match self.layout_watcher.change_file(&new) {
@@ -105,7 +105,7 @@ impl Source {
                 }
             }
         }
-        if let Some(path) = settings.get::<Cow<str>, _>(SETTING_LAYOUT) {
+        if let Some(path) = settings.get::<Cow<str>>(SETTING_LAYOUT) {
             let new = PathBuf::from(path.as_ref());
             if self.layout_watcher.path.as_ref() != Some(&new) {
                 match self.layout_watcher.change_file(&new) {
@@ -240,8 +240,8 @@ impl MouseWheelSource for Source {
 
 impl GetDefaultsSource for Source {
     fn get_defaults(settings: &mut DataObj) {
-        settings.set_default::<_, i64, _>(SETTING_WIDTH, 350);
-        settings.set_default::<_, i64, _>(SETTING_HEIGHT, 700);
+        settings.set_default::<i64>(SETTING_WIDTH, 350);
+        settings.set_default::<i64>(SETTING_HEIGHT, 700);
     }
 }
 
