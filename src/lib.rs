@@ -12,6 +12,7 @@ use livesplit_core::{
     layout::LayoutState,
     rendering::software::Renderer,
     run::saver::livesplit::{save_timer, IoWrite},
+    timing::TimingMethod,
     Layout, SharedTimer, Timer,
 };
 use log::*;
@@ -122,6 +123,10 @@ impl Sourceable for Source {
         let width = ctx.settings.get(SETTING_WIDTH).unwrap();
         let height = ctx.settings.get(SETTING_HEIGHT).unwrap();
         let timer = Timer::new(config::default_run()).unwrap().into_shared();
+        timer
+            .write()
+            .unwrap()
+            .set_current_timing_method(TimingMethod::GameTime);
         let mut source = Self {
             timer: timer.clone(),
             layout: Layout::default_layout(),
@@ -240,7 +245,7 @@ impl MouseWheelSource for Source {
 
 impl GetDefaultsSource for Source {
     fn get_defaults(settings: &mut DataObj) {
-        settings.set_default::<i64>(SETTING_WIDTH, 350);
+        settings.set_default::<i64>(SETTING_WIDTH, 400);
         settings.set_default::<i64>(SETTING_HEIGHT, 700);
     }
 }
