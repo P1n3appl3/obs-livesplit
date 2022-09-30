@@ -9,8 +9,8 @@ crate-type = ["cdylib"]
 
 [dependencies]
 obs-wrapper = "0.4"
-# TODO: be able to change "sum of best segments" to "sum of best" in layout
-livesplit-core = { path = "../../livesplit-core", features = [
+# TODO: upstream auto-saving (and maybe image loading from URL)
+livesplit-core = { git = "https://github.com/P1n3appl3/livesplit-core", features = [
   "software-rendering",
   "font-loading",
   "auto-splitting",
