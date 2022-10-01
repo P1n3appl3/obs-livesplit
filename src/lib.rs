@@ -51,6 +51,10 @@ const SETTING_AUTOSPLITTER: ObsString = obs_string!("autosplitter");
 
 impl Source {
     fn update_splits(&mut self, path: &Path) {
+        if self.timer.read().unwrap().current_phase() == livesplit_core::TimerPhase::Ended {
+            // don't reload splits when they get written right after finishing a run
+            return;
+        }
         if let Some(run) = config::parse_run(path) {
             if self.timer.write().unwrap().replace_run(run, true).is_ok() {
                 info!("updated splits");
